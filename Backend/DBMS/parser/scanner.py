@@ -24,19 +24,19 @@ class Scanner:
         ('AND', r'AND\b'),
         ('IN', r'IN\b'),
         ('VALUES', r'VALUES\b'),
-        ('POINT_TYPE', r'POINT\b'), # Para el tipo de dato
+        ('POINT_TYPE', r'POINT\b'), 
         ('RADIUS', r'RADIUS\b'),
         ('K', r'K\b'),
         ('INDEX', r'INDEX\b'),
         ('TYPE', r'INT|DOUBLE|VARCHAR'),
-        ('TECH', r'SERIAL|HASH|BTREE|RTREE\b'),
+        ('TECH', r'HASH|BTREE|RTREE\b'),
+        ('PRIMARY', r'PRIMARY\b'),
+        ('KEY', r'KEY\b'),
         ('ID', r'[a-zA-Z_][a-zA-Z0-9_]*'),
         ('NUM', r'\d+(\.\d+)?'),
         ('STRING', r'"[^"]*"'),
         ('OP', r'[=,();*]'),
         ('SPACE', r'\s+'),
-        ('PRIMARY', r'PRIMARY\b'),
-        ('KEY', r'KEY\b'),
     ]
 
     def __init__(self, text):

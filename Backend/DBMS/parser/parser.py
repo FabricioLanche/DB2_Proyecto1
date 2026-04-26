@@ -73,7 +73,7 @@ class SQLParser:
             
         self.match('OP') # )
         
-        # 4. Archivo (Opcional)
+        # archivo para la carga de datos (opcional )
         filepath = None
         if self.current().type == 'FROM_FILE':
             self.match('FROM_FILE')
