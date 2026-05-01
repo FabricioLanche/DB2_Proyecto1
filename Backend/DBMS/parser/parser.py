@@ -158,6 +158,14 @@ class SQLParser:
             elif curr.type == 'STRING':
                 values.append(curr.value.replace('"', ''))
                 self.match('STRING')
+            elif curr.type == 'POINT_TYPE':
+                self.match('POINT_TYPE')
+                self.match('OP') # (
+                x = float(self.match('NUM').value)
+                self.match('OP') # ,
+                y = float(self.match('NUM').value)
+                self.match('OP') # )
+                values.append((x, y)) # Lo guardamos como una tupla de Python
             else:
                 raise SyntaxError("Valor inválido en VALUES")
             
