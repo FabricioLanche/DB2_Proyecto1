@@ -14,6 +14,7 @@ def ejecutar_query(data: QueryRequest):
 
 UPLOAD_DIR = "Backend/DBMS/datasets"  
 
+#NOTE: Cuando cargués un dataset (.csv) este será guardado en un path local para el uso en la queries
 @router.post("/dataset")
 async def create_dataset(file: UploadFile = File(...)):
     os.makedirs(UPLOAD_DIR, exist_ok=True)

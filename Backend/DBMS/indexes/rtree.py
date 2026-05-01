@@ -2,11 +2,12 @@ from typing import TypeAlias, Annotated, Literal
 from dataclasses import dataclass
 import numpy as np
 import struct 
+import os
 
 area: TypeAlias = list[list[float], list[float]]
 mbrs: TypeAlias = list[area]
 childs: TypeAlias = list[int]
-rid: TypeAlias = list[int, str]
+rid: TypeAlias = list[int, int]
 
 @dataclass 
 class Header:
@@ -45,6 +46,7 @@ class Node:
         return cls(mbrs, childs, n_keys, page, rec_id, is_leaf)
 
 class Rtree:
+    GRAPH_DIR = "Backend/DBMS/graphs"  
     #FILENAME: str
 
     #HEADER: Header
@@ -81,7 +83,7 @@ class Rtree:
             self.HEADER.N_RECORDS += 1
             max_nodes = self.HEADER.MIN_NODES * 2
             #NOTE: Limitado a 2D
-            new_mbrs = [[[0, 0], [0, 0]] for _ in range(max_nodes)]
+            new_mbrs = [[[0.0, 0.0], [0.0, 0.0]] for _ in range(max_nodes)]
             new_childs = [-1 for _ in range(max_nodes)]
             root = Node(new_mbrs, new_childs)
             return (self.HEADER.ROOT_PTR, root)
@@ -120,7 +122,8 @@ class Rtree:
         pass
 
     #NOTE: Metodos publicos
-    def __init__(self, filename: str = "RtreeFile.bin", minimum_nodes: int = 2):
+    def __init__(self, filename: str = "Backend/DBMS/files/RtreeFile.bin", minimum_nodes: int = 2):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
         self.FILENAME = filename
         try:
             with open(self.FILENAME, "rb+") as file:
@@ -142,7 +145,12 @@ class Rtree:
             self.NODE_FORMAT = f"{(max_nodes*'4f') + (max_nodes*'i')}2i20s?"
             self.NODE_SIZE = struct.calcsize(self.NODE_FORMAT)
 
-    def insert(self, new_area: area, new_rid: rid):
+    #NOTE
+    # Este método insertará un punto en la estructura, necesito un
+    # rid (page, offset) para mantener la referencia al registro completo
+    # en el heap_file, se devuelve un booleano con la resolución del método
+    def insert(self, point: list[float, float], new_rid: rid) -> bool:
+        new_area = [point, point]
         leaf_ptr, leaf_node = self.__choose_leaf(new_area)
         print("Nodo hoja encontrado: ", leaf_node)
         if (leaf_node.N_KEYS < self.HEADER.MIN_NODES * 2):
@@ -152,32 +160,47 @@ class Rtree:
           leaf_node.N_KEYS += 1
           self.__write_node(leaf_ptr, leaf_node)
         else:
-            # me faltan:
-          #split
+          #Resta los métodos auxiliares:
+          #Split-Lineal
           #Adjusttree
           pass
         self.__write_header()
-        pass
+        return True
 
-    def remove():
-        pass
+    #NOTE
+    # Este método removerá el punto pasado en los parámetros,
+    # la devolución es un booleano con la resolución de la acción
+    def remove(self, point: list[float, float]) -> bool:
+        #Resta los métodos auxiliares:
+        #Find-Leaf
+        #Condense-Tree
+        return True
 
-    def rangeSearch(point: list[float, float], radious: int):
-        pass
+    #NOTE
+    # Este método usará la técnica de búsqueda en radio para hallar 
+    # los vecinos circuncritos al punto + radio designados, retorna
+    # una lista de puntos [(lon1, lat1), (lon2, lat2) ... (lon-n, lat-n)]
+    def rangeSearch(point: list[float, float], radious: int) -> list[list[float, float]]:
+        return [[1, 8], [10, 30], [20, 5]]
 
-    def knn(point: list[float, float], k: int):
-        pass
+    #NOTE
+    # Del mismo modo que la búsqueda en rango, el método knn solicita
+    # un punto y un valor k para delimitar la búsqueda de los k vecinos
+    # más cercanos a un punto. La devolución son precisamente una lista
+    # de k puntos [(lon1, lat1), (lon2, lat2) ... (lon-k, lat-k)]
+    def knn(point: list[float, float], k: int) -> list[list[float, float]]:
+        return [[1, 8], [10, 30], [20, 5]]
 
-    def visualize():
-        pass
-
-# latitud = 1, longitud = 8
-# point = np.array([[1,8], [1,8]])
-# print(point)
+    #NOTE: 
+    # Este método creará la visualización gráfica del R-tree con matplolib
+    # el gráfica se deposita directamente en la dirección de GRAPH_DIR y 
+    # la función devuelve su path (string)
+    def visualize() -> str:
+        return "./path"
 
 if __name__ == "__main__":
     rtree = Rtree()
 
-    point = np.array([[1,8], [1,8]])
-    print(point[0])
+    point = np.array([1,8])
+    print(point)
     rtree.insert(point, [1, "sdad"])
