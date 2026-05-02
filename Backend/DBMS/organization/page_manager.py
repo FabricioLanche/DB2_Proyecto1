@@ -40,27 +40,42 @@ class PageManager:
         with open(self.db_filename, 'r+b') as f:
             f.seek(offset)
             f.write(data.ljust(self.PAGE_SIZE, b'\x00'))
+        # Si la pagina es la misma en cache, reiniciamos el cache para mantener la consistencia (version)
         if page_id == self.last_page_id_loaded:
           self.last_page_id_loaded = -1
           self.last_page_data = None
 
     def reset_counters(self):
-        """Reinicia el contador para una nueva medición."""
         self.read_count = 0
         self.write_count = 0
 
     def get_stats(self):
-        """Retorna las métricas actuales."""
         return {
             "reads": self.read_count,
             "writes": self.write_count,
             "total": self.read_count + self.write_count
         }
     def allocate_new_page(self) -> int:
-     with open(self.db_filename, 'r+b') as f:
-        f.seek(0, 2)                          # Va al final del archivo
-        eof_offset = f.tell()                 # Posición actual = tamaño total
-        new_page_id = eof_offset // self.PAGE_SIZE  # ID de la nueva página
-        f.write(b'\x00' * self.PAGE_SIZE)     # Escribe 4096 bytes vacíos
-     self.write_count += 1                     # Cuenta como acceso de escritura
-     return new_page_id
+        # Asigna una nueva página
+        file_size = os.path.getsize(self.db_filename)
+        
+        # VALIDACIÓN CRÍTICA: el archivo debe ser múltiplo de PAGE_SIZE
+        if file_size % self.PAGE_SIZE != 0:
+            raise ValueError(
+                f"❌ Archivo corrupto: tamaño {file_size} bytes "
+                f"no es múltiplo de PAGE_SIZE ({self.PAGE_SIZE})"
+            )
+        
+        new_page_id = file_size // self.PAGE_SIZE
+        
+        try:
+            with open(self.db_filename, 'r+b') as f:
+                f.seek(0, 2)  # Ir al final
+                f.write(b'\x00' * self.PAGE_SIZE)
+                f.flush()  # Forzar escritura a disco
+        except IOError as e:
+            raise IOError(f"Error al escribir nueva página: {e}")
+        
+        self.write_count += 1
+        
+        return new_page_id
