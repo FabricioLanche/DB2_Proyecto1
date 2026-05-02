@@ -4,15 +4,15 @@ from typing import Tuple, Any, Optional
 
 class TableConfig:
     # Representar qué forma tienen los datos que el usuario insertó.
-    
     def __init__(self, data_format: str, column_names):
         self.data_format = data_format
         self.data_size = struct.calcsize(self.data_format)
-
         # Mapeo: dónde está cada atributo en la tupla
         self.column_map = {name: idx for idx, name in enumerate(column_names)}
+        
     def get_data_size(self) -> int:
         return self.data_size
+    
     def get_column_format(self, column_name: str) -> str:
         fmt = self.data_format.lstrip('<>=!')
         tokens = re.findall(r'\d*[a-zA-Z]', fmt)
