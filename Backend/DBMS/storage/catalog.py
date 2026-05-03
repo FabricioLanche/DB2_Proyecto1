@@ -1,11 +1,17 @@
 import json
 import math
+import os
 from DBMS.organization.page_manager import PageManager
 
 class SystemCatalog:
-    def __init__(self):
-        self.pm = PageManager("system_catalog.dat")
+    def __init__(self, filename="system_catalog.dat"):
+        self.filename = filename
+        self.pm = PageManager(filename)
         self.metadata = {} 
+        if not os.path.exists(self.filename):
+            # Si no existe, lo creamos con un diccionario vacío
+            with open(self.filename, 'w') as f:
+                json.dump({}, f)
         self._load_catalog()
 
     def _load_catalog(self):
