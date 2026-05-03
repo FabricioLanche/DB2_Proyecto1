@@ -44,6 +44,7 @@ class HeapFile:
     
     def _persist_metadata(self) -> None:
         # Guarda la metadata en la página 0 usando PageManager
+        # Solo llamar en momentos clave (flush, init)."""
         page0 = bytearray(self.pm.read_page(0))
         metadata = struct.pack(
             self._METADATA_FORMAT,
@@ -54,6 +55,9 @@ class HeapFile:
         )
         page0[:self._METADATA_SIZE] = metadata
         self.pm.write_page(0, bytes(page0))
+    
+    def flush_metadata(self) -> None:
+        self._persist_metadata()
     
     def insert(self, record: Record) -> Tuple[int, int]:
         record_bytes = record.to_bytes(self.config)
@@ -75,7 +79,7 @@ class HeapFile:
             # Sobrescribe el slot con el nuevo registro
             self._write_record_to_slot(page, slot_id, record_bytes)
             self.pm.write_page(page_id, bytes(page))
-            self._persist_metadata()
+            # Metadata se mantiene en RAM; se persiste en flush()
             return (page_id, slot_id)
         
         # Caso 2: No hay huecos
@@ -97,7 +101,7 @@ class HeapFile:
         
         self.pm.write_page(page_id, bytes(page))
         self.total_records += 1
-        self._persist_metadata()
+        # Metadata se mantiene en RAM; se persiste en flush()
         
         return (page_id, slot_id)
     
@@ -159,7 +163,7 @@ class HeapFile:
         
         self.pm.write_page(page_id, bytes(page))
         self.total_records = max(0, self.total_records - 1)
-        self._persist_metadata()
+        # Metadata se mantiene en RAM; se persiste en flush()
         return True
     
     def load_from_csv(self, csv_path: str) -> List[Tuple[int, int]]:
@@ -196,6 +200,7 @@ class HeapFile:
             size = int(fmt_clean[:-1]) if fmt_clean[:-1] else 1
             return raw.encode('utf-8')[:size].ljust(size, b'\x00')
         return raw
+    
     # ============ Métodos internos (helpers) ============
     
     def _slot_offset(self, slot_id: int) -> int:
@@ -207,7 +212,7 @@ class HeapFile:
         return struct.unpack(self._PAGE_HEADER_FORMAT, page[:self._PAGE_HEADER_SIZE])[0]
     
     def _write_page_header(self, page: bytearray, record_count: int) -> None:
-        """Escribe el conteo de registros en la cabecera de página."""
+        # Escribe el conteo de registros en la cabecera de página.
         header = struct.pack(self._PAGE_HEADER_FORMAT, record_count)
         page[:self._PAGE_HEADER_SIZE] = header
     
