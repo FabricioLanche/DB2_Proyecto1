@@ -53,7 +53,7 @@ class SequentialIndex:
             self.last_main_page = data[4]
     
     def _persist_metadata(self) -> None:
-        # Guarda metadata en página 0
+        #Escribe metadata a disco -> solo se llama en momentos clave: reconstruct, flush, init
         page0 = bytearray(self.pm.read_page(0))
         metadata = struct.pack(
             self._METADATA_FORMAT,
@@ -70,6 +70,9 @@ class SequentialIndex:
         page0[self._METADATA_SIZE:self._METADATA_SIZE+16] = pk_fmt_bytes
     
         self.pm.write_page(0, bytes(page0))
+    
+    def flush_metadata(self) -> None:
+        self._persist_metadata()
     
     def _build_sparse_index(self) -> List[Tuple[int, int]]:
         sparse = []
@@ -92,51 +95,62 @@ class SequentialIndex:
     def search_rid(self, pk: int) -> Optional[Tuple[int, int]]:
         """Busca el RID asociado a una PK.
         Estrategia:
-        1. Búsqueda binaria en sparse_index para identificar página principal.
-        2. Escaneo lineal en esa página.
-        3. Si no encuentra, sigue el next_pos hacia el área auxiliar.
+        1. Búsqueda binaria en sparse_index para identificar página candidata.
+        2. Recorrido de la cadena lógica (next_pos) desde el primer entry de esa página.
         """
-        if not self.sparse_index:
+        if self.first_logical_pos == -1:
             return None
         
-        # Búsqueda binaria para encontrar la página candidata
+        # Determina punto de inicio usando sparse_index
+        start_pos = self._sparse_start_pos(pk)
+        
+        # Recorre la cadena lógica desde start_pos
+        current_pos = start_pos
+        visited = set()
+        
+        while current_pos != -1:
+            if current_pos in visited:
+                return None
+            visited.add(current_pos)
+            
+            page_id, slot_id = self._pos_to_page_slot(current_pos)
+            page = self.pm.read_page(page_id)
+            pk_entry, rid_p, rid_s, next_pos = self._read_by_RID(page, slot_id)
+            
+            if pk_entry == pk:
+                return (rid_p, rid_s)
+            
+            if pk_entry > pk:
+                return None  # Lista ordenada, no lo encontraremos
+            
+            current_pos = next_pos
+        
+        return None
+    
+    def _sparse_start_pos(self, pk: int) -> int:
+        """Búsqueda binaria en sparse_index → posición del primer entry
+        de la última página con first_pk <= pk. O(log P)."""
+        if not self.sparse_index:
+            return self.first_logical_pos
+        
         left, right = 0, len(self.sparse_index) - 1
-        page_idx = 0
+        page_idx = -1
         
         while left <= right:
             mid = (left + right) // 2
-            mid_pk, mid_page = self.sparse_index[mid]
+            mid_pk, _ = self.sparse_index[mid]
             if mid_pk <= pk:
                 page_idx = mid
                 left = mid + 1
             else:
                 right = mid - 1
         
+        if page_idx == -1:
+            # pk menor que todo el sparse_index → empezar desde el inicio
+            return self.first_logical_pos
+        
         candidate_page = self.sparse_index[page_idx][1]
-        
-        # Escanea la página principal
-        page = self.pm.read_page(candidate_page)
-        entry_count = self._read_page_header(page)
-        
-        for slot_idx in range(entry_count):
-            pk_entry, rid_p, rid_s, next_pos = self._read_by_RID(page, slot_idx)
-            
-            if pk_entry == pk:
-                return (rid_p, rid_s)
-            
-            if pk_entry > pk:
-                # PK más grande encontrado, sigue el next_pos si lo hay
-                if next_pos != -1:
-                    return self._follow_chain(pk, next_pos)
-                return None
-        
-        # Puede haber más en el área auxiliar, sigue el last entry's next_pos
-        if entry_count > 0:
-            _, _, _, last_next_pos = self._read_by_RID(page, entry_count - 1)
-            if last_next_pos != -1:
-                return self._follow_chain(pk, last_next_pos)
-        
-        return None
+        return (candidate_page - 1) * self.pm.PAGE_SIZE + 4
     
     def range_search_rids(self, pk1: int, pk2: int) -> List[Tuple[int, int]]:
         result = []
@@ -194,8 +208,7 @@ class SequentialIndex:
             self.pm.write_page(page_id, bytes(page))
         
         self.k_aux += 1
-        self.n_main += 1
-        self._persist_metadata()
+        # Metadata se mantiene en RAM; se persiste en reconstruct() o flush()
         
         if self.k_aux > self.k_limit:
             self.reconstruct()
@@ -226,7 +239,7 @@ class SequentialIndex:
         self.pm.write_page(curr_page_id, bytes(page))
         
         self.n_main = max(0, self.n_main - 1)
-        self._persist_metadata()
+        # Metadata se mantiene en RAM; se persiste en flush()
         
         return (rid_p, rid_s)
     
@@ -255,7 +268,7 @@ class SequentialIndex:
         # I/O: P_main lecturas secuenciales + P_out escrituras secuenciales
 
         temp_filename = self.filename + ".tmp"
-        temp_pm = PageManager(temp_filename)
+        temp_pm = PageManager(temp_filename, self.pm.io_counter)
 
         out_page_id  = 1
         out_page     = bytearray(b'\x00' * temp_pm.PAGE_SIZE)
@@ -347,7 +360,7 @@ class SequentialIndex:
 
         # Reemplazamos el archivo y actualizamos metadata
         os.replace(temp_filename, self.filename)
-        self.pm             = PageManager(self.filename)
+        self.pm.invalidate_cache()  # Archivo cambió en disco, invalidar caché
         self.sparse_index   = new_sparse
         self.n_main         = total_valid
         self.k_aux          = 0
@@ -372,6 +385,10 @@ class SequentialIndex:
     
     def _find_predecessor(self, pk: int) -> Tuple[int, int]:
         #Encuentra posiciones del predecesor y sucesor lógico de una PK (pred_pos, succ_pos)
+            # Si el índice está vacío
+        if self.first_logical_pos == -1:
+            return (-1, -1)
+
         current_pos = self.first_logical_pos
         prev_pos = -1
         
@@ -389,35 +406,31 @@ class SequentialIndex:
         return (prev_pos, -1)
     
     def _find_first_greater_equal(self, pk: int) -> Optional[Tuple[int, int]]:
-        if not self.sparse_index:
+        """Encuentra el primer entry con pk_entry >= pk.
+        Usa sparse_index (O(log P)) para saltar a la página correcta,
+        luego recorre la cadena lógica."""
+        if self.first_logical_pos == -1:
             return None
         
-        # Búsqueda binaria: PRIMERA página con pk_primero >= pk
-        left, right = 0, len(self.sparse_index) - 1
-        candidate_idx = -1
+        # Usa sparse_index para saltar cerca del objetivo
+        start_pos = self._sparse_start_pos(pk)
         
-        while left <= right:
-            mid = (left + right) // 2
-            mid_pk, _ = self.sparse_index[mid]
-            if mid_pk >= pk:
-                candidate_idx = mid
-                right = mid - 1
-            else:
-                left = mid + 1
+        current_pos = start_pos
+        visited = set()
         
-        if candidate_idx != -1:
-            return (self.sparse_index[candidate_idx][1], 0)  # Directo
-        
-        # Aquí significa que pk > todas las páginas principales
-        # Buscamos en auxiliar desde la última página del area principal
-        last_page = self.sparse_index[-1][1]
-        page = self.pm.read_page(last_page)
-        entry_count = self._read_page_header(page)
-        
-        if entry_count > 0:
-            _, _, _, last_next_pos = self._read_by_RID(page, entry_count - 1)
-            if last_next_pos != -1:
-                return self._follow_chain_ge(pk, last_next_pos)
+        while current_pos != -1:
+            if current_pos in visited:
+                return None
+            visited.add(current_pos)
+            
+            page_id, slot_id = self._pos_to_page_slot(current_pos)
+            page = self.pm.read_page(page_id)
+            pk_entry, _, _, next_pos = self._read_by_RID(page, slot_id)
+            
+            if pk_entry >= pk:
+                return (page_id, slot_id)
+            
+            current_pos = next_pos
         
         return None
 
@@ -492,12 +505,23 @@ class SequentialIndex:
     def _allocate_entry_in_aux(self) -> int:
         #Asigna un espacio para una nueva entrada en área auxiliar.
         total_entries = self.n_main + self.k_aux         # asigna al final del archivo
-        pos = 4 + (total_entries * self.NODE_SIZE)  # 4 bytes de header por página, aprox.
-        return pos # Posición absoluta (en bytes) donde escribir.
+
+        # ¿En qué página va?
+        page_id = (total_entries // self.entries_per_page) + 1
+        
+        # ¿En qué slot?
+        slot_id = total_entries % self.entries_per_page
+        
+        # Posición absoluta en bytes
+        pos = ((page_id-1) * self.pm.PAGE_SIZE) + 4 + (slot_id * self.NODE_SIZE)
+        
+        return pos
     
     def _pos_to_page_slot(self, pos: int) -> Tuple[int, int]:
         # posición absoluta (bytes) -> (page_id, slot_id dentro de la página)."""
         # Posición 0-4095: página 1, posición 4096-8191: página 2, etc.
+        if pos == -1:
+            return (-1, -1)
         page_id = (pos // self.pm.PAGE_SIZE) + 1
         slot_offset = pos % self.pm.PAGE_SIZE
         slot_id = (slot_offset - 4) // self.NODE_SIZE  # -4 por el header
@@ -507,7 +531,13 @@ class SequentialIndex:
         #Escribe una entrada en una posición absoluta
         page_id, slot_id = self._pos_to_page_slot(pos)
         page = bytearray(self.pm.read_page(page_id))
+        
+        # Actualizar entry_count en el header
+        current_entry_count = self._read_page_header(page)
+        new_entry_count = max(current_entry_count, slot_id + 1)
+        
         self._write_entry_on_page(page, slot_id, pk, rid_p, rid_s, next_pos)
+        self._write_page_header(page, new_entry_count)
         self.pm.write_page(page_id, bytes(page))
     
     def _read_by_RID(self, page: bytes, slot_idx: int) -> Tuple[int, int, int, int]:
